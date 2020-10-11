@@ -2,6 +2,9 @@ import time
 import zmq
 import multiprocessing
 import numpy as np
+import asyncio
+import math
+import csv
 
 class Board:
     def __init__(self, board, x, y, length):
@@ -111,7 +114,7 @@ class producer(multiprocessing.Process):
 
     def run(self):
         context = zmq.Context()
-        zmq_socket = context.socket(zmq.PUSH)
+        zmq_socket = context.socket(zmq.REP)
         zmq_socket.bind("tcp://*:5557")
         # Start your result manager and workers before you start your producers
         for move in self.moves:
@@ -124,20 +127,31 @@ class producer(multiprocessing.Process):
                 'width':self.width,
                 'length':self.length,
             }
+            print("Attempting receive...")
+            zmq_socket.recv()
             zmq_socket.send_json(work_message)
+            print("Work sent!")
 
 class collector(multiprocessing.Process):
-    def __init__(self, q):
+    def __init__(self, q, l, c, w, totalMoves):
         multiprocessing.Process.__init__(self)
         self.q = q
+        self.l = l
+        self.c = c
+        self.w = w
+        self.totalMoves = totalMoves
 
     def run(self):
         context = zmq.Context()
         results_receiver = context.socket(zmq.PULL)
         results_receiver.bind("tcp://*:5558")
         # collecter_data = {}
-        while(not self.q.full()):
+        while(c.value < totalMoves):
             result = results_receiver.recv_json()
+            c.value += 1
+            print('Move','#'+str(int(c.value)),'computed by worker','#'+str(result['workerid']))
+            # print(int(c.value),'/',totalMoves)
+            self.w.put(result['workerid'])
             self.q.put(result)
 
         maxResult = q.get() 
@@ -145,21 +159,52 @@ class collector(multiprocessing.Process):
             result = q.get()
             if(maxResult['score'] <= result['score']):
                 maxResult = result
-        print(maxResult)
+        print('Best move:',maxResult['move'])
+        self.l.release()
 
-height = 3
-width = 3
-length = 3
-state = np.zeros((height,width))
-board = Board(state, height, width, length)
-moves = board.get_possibilities()
-turn = True
-depth = float('inf')
-q = multiprocessing.Queue(len(moves))
+times = []
+numOfWorkers = []
+for i in range(0,3):
+    start_time = time.time()
+    height = 3
+    width = 3
+    length = 3
+    depth = 3
+    state = np.zeros((height,width))
+    board = Board(state, height, width, length)
+    moves = board.get_possibilities()
+    totalMoves = len(moves)
+    workers = []
+    turn = True 
+    s = asyncio.Semaphore()
+    q = multiprocessing.Queue()
+    w = multiprocessing.Queue()
+    l = multiprocessing.Lock()
+    c = multiprocessing.Value('d',0)
+    l.acquire()
 
-print("Starting collector...")
-collector(q).start()
+    print("Starting collector...")
+    collector(q,l,c,w,totalMoves).start()
+    print("Starting producer...")
+    producer(state,turn,depth,moves,height,width,length,q).start()
 
-print("Starting producer...")
-producer(state,turn,depth,moves,height,width,length,q).start()
+    print("Number of Possible Moves:",totalMoves)
+    print("Computations needed:",math.factorial(totalMoves))
 
+    l.acquire()
+    end_time = time.time()
+    time_taken = end_time - start_time
+    print("Time Taken:",time_taken)
+    l.release()
+
+    while(not w.empty()):
+        workers.append(w.get())
+
+    print("Unique workers:", len(set(workers)))
+    times.append(time_taken)
+    numOfWorkers.append(len(set(workers)))
+
+with open('results.csv','a') as csvfile:
+    writer = csv.writer(csvfile)
+    writer.writerow([height,width,length,depth]+times+numOfWorkers)
+    

@@ -222,21 +222,25 @@ def minimax(state, turn, alpha, beta, depth):
 
 def parallelA(state, turn, depth):
     class workerThread(multiprocessing.Process):
-        def __init__(self, state, move, q):
+        def __init__(self, state, move, q, turn, depth):
             multiprocessing.Process.__init__(self)
             self.state = state
             self.move = move
             self.q = q
+            self.turn = turn 
+            self.depth = depth
 
         def run(self):
             state = self.state
             move = self.move
             q = self.q
+            turn = self.turn
+            depth = self.depth
             state[move[0]][move[1]] = black if turn else white 
-            if(withpruning == 1):
-                score = minimax(state, not turn, float('-inf'), float('inf'), depth)[1]
-            if(withpruning == 0):
-                score = minimaxNoPruning(state, not turn, depth)[1]
+            # if(withpruning == 1):
+            #     score = minimax(state, not turn, float('-inf'), float('inf'), depth)[1]
+            # if(withpruning == 0):
+            score = minimaxNoPruning(state, not turn, depth)[1]
             minMaxScore = score
             minMaxMove = move 
             # Put move and score in the queue for parsing later
@@ -251,8 +255,9 @@ def parallelA(state, turn, depth):
     # Get possible moves (branches)
     moves = board.get_possibilities()
     for move in moves:
+        print(move,'Thread',count)
         # For each branch, create a process that traverses
-        worker = workerThread(np.copy(state), move, q)
+        worker = workerThread(np.copy(state), move, q, turn, depth)
         count += 1
         worker.start()
         workers.append(worker)
@@ -292,7 +297,6 @@ def algorithm(state, turn, depth, height, width, match):
     x = height
     y = width
     length = match
-    print('### Game move ###')
     print(state)
     data = parallelA(state, turn, depth)
     score = data[1]
